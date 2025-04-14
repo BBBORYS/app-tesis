@@ -70,7 +70,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen>
     AndroidNotificationDetails androidPlatformChannelSpecifics =
         AndroidNotificationDetails(
       'asistente_ana_channel',
-      'Asistente Ana',
+      'Asistente Anaaaa',
       channelDescription: 'Canal para notificaciones del Asistente Dental Ana',
       importance: Importance.high,
       priority: Priority.high,
