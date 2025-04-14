@@ -1,0 +1,2 @@
+C:/Users/melli/OneDrive/Escritorio/ultima2/ultima2/android/app/.cxx/RelWithDebInfo/1jq4k3c6/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/melli/OneDrive/Escritorio/ultima2/ultima2/android/app/.cxx/RelWithDebInfo/1jq4k3c6/armeabi-v7a/CMakeFiles/rebuild_cache.dir

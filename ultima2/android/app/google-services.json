@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1014775181786",
+    "project_id": "appborys",
+    "storage_bucket": "appborys.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1014775181786:android:8c7d561008ec93dabc90e3",
+        "android_client_info": {
+          "package_name": "com.example.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCC9QURLswr6SQN1Ph72TDXjrlisYZttnw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1014775181786:android:cea95a1afe6c5e14bc90e3",
+        "android_client_info": {
+          "package_name": "com.example.ultima2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCC9QURLswr6SQN1Ph72TDXjrlisYZttnw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
