@@ -91,7 +91,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen>
 
     await _notificationsPlugin.show(
       0,
-      'Asistente Dental Ana',
+      'Asistente Ana',
       _isActive ? 'Asistente activado' : 'Asistente desactivado',
       platformChannelSpecifics,
       payload: 'toggle',
@@ -133,7 +133,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Asistente Dental Ana',
+          'Asistente Ana',
           style: TextStyle(
             color: themeProvider.currentTheme.brightness == Brightness.light
                 ? Colors.black
