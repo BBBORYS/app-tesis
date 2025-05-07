@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ultima2/providers/theme_provider.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import '../providers/theme_provider.dart';
 
 class AsistenteAnaScreen extends StatefulWidget {
   const AsistenteAnaScreen({Key? key}) : super(key: key);
@@ -19,10 +21,18 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
   PermissionStatus _backgroundPermission = PermissionStatus.denied;
   late SharedPreferences _prefs;
 
+  late stt.SpeechToText _speech;
+  late FlutterTts _tts;
+  bool _isListening = false;
+  bool _isSpeaking = false;
+  String _lastWords = '';
+  String _statusMessage = 'Di "Ok Ana" para comenzar';
+
   @override
   void initState() {
     super.initState();
     _initPreferences();
+    _initSpeechServices();
     _checkPermissions();
     _initAlarmManager();
   }
@@ -35,8 +45,45 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
     });
   }
 
+  Future<void> _initSpeechServices() async {
+    _speech = stt.SpeechToText();
+    _tts = FlutterTts();
+
+    await _speech.initialize(
+      onStatus: (status) => _updateListeningStatus(status),
+      onError: (error) => _handleSpeechError(error),
+    );
+
+    await _tts.setLanguage('es-ES');
+    await _tts.setPitch(1.1); // Voz más femenina
+    await _tts.setSpeechRate(0.5); // Velocidad natural
+    await _tts.setVoice({'name': 'es-es-x-ana-local', 'locale': 'es-ES'});
+
+    _tts.setStartHandler(() {
+      setState(() => _isSpeaking = true);
+    });
+
+    _tts.setCompletionHandler(() {
+      setState(() => _isSpeaking = false);
+      if (_isOn) _startListening();
+    });
+
+    if (_isOn) {
+      _startListening();
+    }
+  }
+
   Future<void> _initAlarmManager() async {
     await AndroidAlarmManager.initialize();
+    if (_backgroundServiceEnabled) {
+      await AndroidAlarmManager.periodic(
+        const Duration(minutes: 15),
+        1,
+        _backgroundTask,
+        exact: true,
+        wakeup: true,
+      );
+    }
   }
 
   Future<void> _checkPermissions() async {
@@ -57,6 +104,8 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
 
     if (!status.isGranted) {
       _showPermissionDeniedDialog('micrófono');
+    } else if (_isOn) {
+      _startListening();
     }
   }
 
@@ -75,21 +124,107 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Permiso requerido'),
+        title: const Text('Permiso requerido'),
         content: Text(
             'Para que el asistente funcione correctamente, necesitas conceder el permiso de $permission.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancelar'),
+            child: const Text('Cancelar'),
           ),
           TextButton(
             onPressed: () => openAppSettings(),
-            child: Text('Ajustes'),
+            child: const Text('Ajustes'),
           ),
         ],
       ),
     );
+  }
+
+  void _updateListeningStatus(String status) {
+    setState(() {
+      _isListening = status == 'listening';
+      if (status == 'done' && _isOn && !_isSpeaking) {
+        _startListening();
+      }
+    });
+  }
+
+  void _handleSpeechError(error) {
+    setState(() {
+      _statusMessage = 'Error de voz: $error';
+    });
+    if (_isOn && !_isSpeaking) {
+      _startListening();
+    }
+  }
+
+  Future<void> _startListening() async {
+    try {
+      await _speech.listen(
+        onResult: (result) => _processSpeechResult(result),
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 5),
+        localeId: 'es_ES',
+        onSoundLevelChange: (level) {
+          if (!mounted) return;
+          setState(() => _isListening = level > 0);
+        },
+      );
+      _updateStatus('Escuchando...');
+    } catch (e) {
+      _updateStatus('Error al escuchar');
+    }
+  }
+
+  void _processSpeechResult(result) {
+    if (!mounted || !_isOn || _isSpeaking) return;
+
+    setState(() => _lastWords = result.recognizedWords.toLowerCase());
+
+    if (_lastWords.contains('ok ana') || _lastWords.contains('ocana')) {
+      _responderSaludo();
+    }
+  }
+
+  Future<void> _responderSaludo() async {
+    if (!_isOn || _isSpeaking) return;
+
+    final now = DateTime.now();
+    String saludo;
+
+    if (now.hour < 12) {
+      saludo = 'Buenos días, soy Ana. ¿En qué puedo ayudarte hoy?';
+    } else if (now.hour < 19) {
+      saludo = 'Buenas tardes, soy Ana. ¿Qué necesitas?';
+    } else {
+      saludo = 'Buenas noches, soy Ana. ¿Cómo puedo ayudarte?';
+    }
+
+    await _speech.stop();
+    await _tts.speak(saludo);
+    _updateStatus(saludo);
+  }
+
+  Future<void> _toggleAsistente() async {
+    if (!_microphonePermission.isGranted) {
+      await _requestMicrophonePermission();
+      return;
+    }
+
+    setState(() {
+      _isOn = !_isOn;
+    });
+
+    await _prefs.setBool('asistente_activo', _isOn);
+
+    if (_isOn) {
+      _startListening();
+      _updateStatus('Di "Ok Ana" para comenzar');
+    } else {
+      await _speech.stop();
+      _updateStatus('Asistente desactivado');
+    }
   }
 
   Future<void> _toggleBackgroundService() async {
@@ -119,19 +254,20 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
 
   static Future<void> _backgroundTask() async {
     debugPrint('Ejecutando tarea en segundo plano');
+    // Aquí puedes agregar lógica para ejecutar en segundo plano
   }
 
-  Future<void> _toggleAsistente() async {
-    if (!_microphonePermission.isGranted) {
-      await _requestMicrophonePermission();
-      return;
+  void _updateStatus(String message) {
+    if (mounted) {
+      setState(() => _statusMessage = message);
     }
+  }
 
-    setState(() {
-      _isOn = !_isOn;
-    });
-
-    await _prefs.setBool('asistente_activo', _isOn);
+  @override
+  void dispose() {
+    _speech.stop();
+    _tts.stop();
+    super.dispose();
   }
 
   @override
@@ -157,8 +293,8 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
               colors: [
                 isDarkMode
                     ? Colors.grey[900]!
-                    : Color.fromARGB(255, 153, 251, 174),
-                isDarkMode ? Colors.grey[800]! : Color(0xFF6DD5ED),
+                    : const Color.fromARGB(255, 153, 251, 174),
+                isDarkMode ? Colors.grey[800]! : const Color(0xFF6DD5ED),
               ],
             ),
           ),
@@ -172,8 +308,8 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
             colors: [
               isDarkMode
                   ? Colors.grey[900]!
-                  : Color.fromARGB(255, 125, 255, 140),
-              isDarkMode ? Colors.grey[800]! : Color(0xFF6DD5ED),
+                  : const Color.fromARGB(255, 125, 255, 140),
+              isDarkMode ? Colors.grey[800]! : const Color(0xFF6DD5ED),
             ],
           ),
         ),
@@ -188,7 +324,13 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: _isOn ? Colors.green : Colors.grey[300]!,
+                      color: _isOn
+                          ? (_isListening
+                              ? Colors.green
+                              : _isSpeaking
+                                  ? Colors.blue
+                                  : Colors.blueAccent)
+                          : Colors.grey[300]!,
                       width: 3,
                     ),
                     boxShadow: [
@@ -211,16 +353,26 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                     ),
                   ),
                 ),
-                SizedBox(height: 20),
+                const SizedBox(height: 20),
                 Text(
-                  _isOn ? 'Asistente activado' : 'Asistente desactivado',
+                  _statusMessage,
                   style: TextStyle(
                     fontSize: 18,
                     color: isDarkMode ? Colors.white : Colors.black,
                   ),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: 40),
+                const SizedBox(height: 10),
+                if (_lastWords.isNotEmpty)
+                  Text(
+                    '"$_lastWords"',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isDarkMode ? Colors.white70 : Colors.black54,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                const SizedBox(height: 40),
                 // Botón principal de encendido/apagado
                 GestureDetector(
                   onTap: _toggleAsistente,
@@ -230,13 +382,14 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(30),
                       color: _isOn
-                          ? Color.fromARGB(255, 1, 248, 54).withOpacity(0.3)
+                          ? const Color.fromARGB(255, 1, 248, 54)
+                              .withOpacity(0.3)
                           : Colors.grey[400]!.withOpacity(0.3),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withOpacity(0.2),
                           blurRadius: 6,
-                          offset: Offset(0, 3),
+                          offset: const Offset(0, 3),
                         )
                       ],
                     ),
@@ -246,7 +399,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                           Align(
                             alignment: Alignment.centerRight,
                             child: Padding(
-                              padding: EdgeInsets.only(right: 20),
+                              padding: const EdgeInsets.only(right: 20),
                               child: Text(
                                 'OFF',
                                 style: TextStyle(
@@ -261,7 +414,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                           Align(
                             alignment: Alignment.centerLeft,
                             child: Padding(
-                              padding: EdgeInsets.only(left: 20),
+                              padding: const EdgeInsets.only(left: 20),
                               child: Text(
                                 'ON',
                                 style: TextStyle(
@@ -273,14 +426,14 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                             ),
                           ),
                         AnimatedAlign(
-                          duration: Duration(milliseconds: 200),
+                          duration: const Duration(milliseconds: 200),
                           alignment: _isOn
                               ? Alignment.centerRight
                               : Alignment.centerLeft,
                           child: Container(
                             width: 50,
                             height: 50,
-                            margin: EdgeInsets.all(5),
+                            margin: const EdgeInsets.all(5),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: const Color.fromARGB(255, 87, 220, 247),
@@ -298,7 +451,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                     ),
                   ),
                 ),
-                SizedBox(height: 30),
+                const SizedBox(height: 30),
                 // Botón para trabajo en segundo plano
                 GestureDetector(
                   onTap: _toggleBackgroundService,
@@ -314,7 +467,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                         BoxShadow(
                           color: Colors.black.withOpacity(0.2),
                           blurRadius: 6,
-                          offset: Offset(0, 3),
+                          offset: const Offset(0, 3),
                         )
                       ],
                     ),
@@ -334,14 +487,14 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                           ),
                         ),
                         AnimatedAlign(
-                          duration: Duration(milliseconds: 200),
+                          duration: const Duration(milliseconds: 200),
                           alignment: _backgroundServiceEnabled
                               ? Alignment.centerRight
                               : Alignment.centerLeft,
                           child: Container(
                             width: 50,
                             height: 50,
-                            margin: EdgeInsets.all(5),
+                            margin: const EdgeInsets.all(5),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: Colors.white,
@@ -367,14 +520,14 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
                     ),
                   ),
                 ),
-                SizedBox(height: 20),
+                const SizedBox(height: 20),
                 // Indicadores de estado de permisos
                 _PermissionStatusIndicator(
                   icon: Icons.mic,
                   status: _microphonePermission,
                   label: 'Micrófono',
                 ),
-                SizedBox(height: 10),
+                const SizedBox(height: 10),
                 _PermissionStatusIndicator(
                   icon: Icons.battery_charging_full,
                   status: _backgroundPermission,
@@ -413,7 +566,7 @@ class _PermissionStatusIndicator extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon, color: isDarkMode ? Colors.white70 : Colors.black54),
-        SizedBox(width: 8),
+        const SizedBox(width: 8),
         Text(
           '$label: ',
           style: TextStyle(
