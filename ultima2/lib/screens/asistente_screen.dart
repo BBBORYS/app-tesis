@@ -1,172 +1,54 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../providers/theme_provider.dart';
 
 class AsistenteAnaScreen extends StatefulWidget {
-  const AsistenteAnaScreen({Key? key}) : super(key: key);
+  const AsistenteAnaScreen({super.key});
 
   @override
-  _AsistenteAnaScreenState createState() => _AsistenteAnaScreenState();
+  State<AsistenteAnaScreen> createState() => _AsistenteAnaScreenState();
 }
 
 class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
-  bool _isOn = false;
-  PermissionStatus _microphonePermission = PermissionStatus.denied;
-  late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+  bool _encendido = false;
+  bool _hablando = false;
+  bool _showPulseAnimation = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _checkPermissions();
-    _initializeNotifications();
-  }
-
-  Future<void> _initializeNotifications() async {
-    flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    
-    const AndroidInitializationSettings initializationSettingsAndroid = 
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-    
-    final InitializationSettings initializationSettings = 
-      InitializationSettings(android: initializationSettingsAndroid);
-    
-    await flutterLocalNotificationsPlugin.initialize(
-      initializationSettings,
-    );
-  }
-
-  Future<void> _showNotification() async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-      AndroidNotificationDetails(
-        'asistente_channel',
-        'Asistente Ana',
-        channelDescription: 'Canal para el asistente Ana',
-        importance: Importance.max,
-        priority: Priority.high,
-        ticker: 'ticker',
-        largeIcon: DrawableResourceAndroidBitmap('ana_avatar'),
-        styleInformation: BigPictureStyleInformation(
-          DrawableResourceAndroidBitmap('ana_avatar'),
-          hideExpandedLargeIcon: false,
-        ),
-        actions: [
-          AndroidNotificationAction(
-            'listen_action',
-            'Escúchame',
-            showsUserInterface: true,
-          ),
-          AndroidNotificationAction(
-            'stop_action',
-            'Detener',
-            showsUserInterface: true,
-          ),
-        ],
-      );
-    
-    const NotificationDetails platformChannelSpecifics = 
-      NotificationDetails(android: androidPlatformChannelSpecifics);
-    
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      'Asistente Ana',
-      _isOn ? 'Escuchando...' : 'En espera',
-      platformChannelSpecifics,
-    );
-  }
-
-  Future<void> _checkPermissions() async {
-    final micStatus = await Permission.microphone.status;
-    
-    if (mounted) {
-      setState(() {
-        _microphonePermission = micStatus;
-      });
-    }
-  }
-
-  Future<void> _requestMicrophonePermission() async {
-    final status = await Permission.microphone.request();
-    
-    if (mounted) {
-      setState(() {
-        _microphonePermission = status;
-      });
-    }
-
-    if (!status.isGranted) {
-      _showPermissionDeniedDialog('micrófono');
-    }
-  }
-
-  void _showPermissionDeniedDialog(String permission) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Permiso requerido'),
-        content: Text(
-            'Para que el asistente funcione correctamente, necesitas conceder el permiso de $permission.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () => openAppSettings(),
-            child: const Text('Ajustes'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _toggleAsistente() async {
-    if (!_microphonePermission.isGranted) {
-      await _requestMicrophonePermission();
-      return;
-    }
-
+  void _toggleEncendido() {
     setState(() {
-      _isOn = !_isOn;
+      _encendido = !_encendido;
+      if (!_encendido)
+        _hablando = false; // Si se apaga, termina la conversación
+      if (_encendido) {
+        _showPulseAnimation = true;
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) setState(() => _showPulseAnimation = false);
+        });
+      }
     });
-
-    await _showNotification();
   }
 
-  Future<void> _handleNotificationAction(String action) async {
-    if (action == 'listen_action' && !_isOn) {
-      await _toggleAsistente();
-    } else if (action == 'stop_action' && _isOn) {
-      await _toggleAsistente();
-    }
+  void _toggleHablar() {
+    setState(() {
+      _hablando = !_hablando;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-    final isDarkMode = themeProvider.currentTheme.brightness == Brightness.dark;
-    final screenSize = MediaQuery.of(context).size;
-
-    // Configurar el manejador de notificaciones
-flutterLocalNotificationsPlugin.initialize(
-  const InitializationSettings(
-    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-  ),
-  onDidReceiveNotificationResponse: (payload) async {
-    if (payload != null) {
-      _handleNotificationAction(payload as String);
-    }
-  },
-);
+    final isLightMode =
+        themeProvider.currentTheme.brightness == Brightness.light;
+    final colors = _getColors(isLightMode);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
           'Asistente Ana',
           style: TextStyle(
-            color: isDarkMode ? Colors.white : Colors.black,
+            color: isLightMode ? Colors.black : Colors.white,
             fontWeight: FontWeight.bold,
+            fontSize: 22,
           ),
         ),
         flexibleSpace: Container(
@@ -174,156 +56,43 @@ flutterLocalNotificationsPlugin.initialize(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                isDarkMode
-                    ? Colors.grey[900]!
-                    : const Color.fromARGB(255, 153, 251, 174),
-                isDarkMode ? Colors.grey[800]! : const Color(0xFF6DD5ED),
-              ],
+              colors: colors.appBarGradient,
             ),
           ),
         ),
+        centerTitle: true,
+        elevation: 0,
       ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              isDarkMode
-                  ? Colors.grey[900]!
-                  : const Color.fromARGB(255, 125, 255, 140),
-              isDarkMode ? Colors.grey[800]! : const Color(0xFF6DD5ED),
-            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: colors.backgroundGradient,
           ),
         ),
         child: Center(
-          child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: screenSize.width * 0.6,
-                  height: screenSize.width * 0.6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _isOn ? Colors.blueAccent : Colors.grey[300]!,
-                      width: 3,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 10,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: ClipOval(
-                    child: Image.asset(
-                      'assets/ana_avatar.png',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Icon(
-                        Icons.mic_none,
-                        size: 60,
-                        color: Colors.grey[400],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  _isOn ? 'Asistente activado' : 'Asistente desactivado',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: isDarkMode ? Colors.white : Colors.black,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
+                // Avatar con efecto de pulso
+                _buildAvatar(isLightMode),
                 const SizedBox(height: 40),
-                GestureDetector(
-                  onTap: _toggleAsistente,
-                  child: Container(
-                    width: 120,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(30),
-                      color: _isOn
-                          ? const Color.fromARGB(255, 1, 248, 54)
-                              .withOpacity(0.3)
-                          : Colors.grey[400]!.withOpacity(0.3),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 6,
-                          offset: const Offset(0, 3),
-                        )
-                      ],
-                    ),
-                    child: Stack(
-                      children: [
-                        if (!_isOn)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 20),
-                              child: Text(
-                                'OFF',
-                                style: TextStyle(
-                                  color: const Color.fromARGB(255, 0, 0, 0),
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                          ),
-                        if (_isOn)
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 20),
-                              child: Text(
-                                'ON',
-                                style: TextStyle(
-                                  color: Colors.black87,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                          ),
-                        AnimatedAlign(
-                          duration: const Duration(milliseconds: 200),
-                          alignment: _isOn
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Container(
-                            width: 50,
-                            height: 50,
-                            margin: const EdgeInsets.all(5),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: const Color.fromARGB(255, 87, 220, 247),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.2),
-                                  blurRadius: 4,
-                                  spreadRadius: 1,
-                                )
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 30),
-                _PermissionStatusIndicator(
-                  icon: Icons.mic,
-                  status: _microphonePermission,
-                  label: 'Micrófono',
-                ),
+
+                // Botón principal de encendido
+                _buildActionButton(isLightMode, colors),
+                const SizedBox(height: 20),
+
+                // Botón de hablar/terminar (solo visible cuando está encendido)
+                if (_encendido) ...[
+                  _buildHablarButton(isLightMode, colors),
+                  const SizedBox(height: 20),
+                ],
+
+                // Texto de estado
+                _buildStatusText(isLightMode),
               ],
             ),
           ),
@@ -331,51 +100,238 @@ flutterLocalNotificationsPlugin.initialize(
       ),
     );
   }
+
+  Widget _buildAvatar(bool isLightMode) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        if (_showPulseAnimation)
+          PulseAnimation(
+            child: Container(
+              width: 130,
+              height: 130,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isLightMode
+                    ? Colors.green[100]?.withOpacity(0.5)
+                    : Colors.green[900]?.withOpacity(0.3),
+              ),
+            ),
+          ),
+        Container(
+          width: 120,
+          height: 120,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isLightMode ? Colors.white : Colors.grey[800]!,
+              width: 3,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                spreadRadius: 2,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            image: const DecorationImage(
+              image: AssetImage('assets/ana_avatar.png'),
+              fit: BoxFit.cover,
+            ),
+          ),
+          child: _hablando
+              ? const Icon(Icons.mic, size: 40, color: Colors.white)
+              : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton(bool isLightMode, AppColors colors) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      transform: Matrix4.identity()..scale(_encendido ? 1.05 : 1.0),
+      child: ElevatedButton(
+        onPressed: _toggleEncendido,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: colors.buttonColor,
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+          textStyle: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 4,
+          shadowColor: Colors.black.withOpacity(0.2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _encendido ? Icons.power_off : Icons.power_settings_new,
+              size: 24,
+              color: isLightMode ? Colors.black87 : Colors.white,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _encendido ? 'APAGAR' : 'ENCENDER',
+              style: TextStyle(
+                color: isLightMode ? Colors.black87 : Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHablarButton(bool isLightMode, AppColors colors) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      transform: Matrix4.identity()..scale(_hablando ? 1.05 : 1.0),
+      child: ElevatedButton(
+        onPressed: _toggleHablar,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _hablando
+              ? Colors.red[400]
+              : isLightMode
+                  ? Colors.blue[400]
+                  : Colors.blue[700],
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+          textStyle: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 4,
+          shadowColor: Colors.black.withOpacity(0.2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _hablando ? Icons.stop : Icons.mic,
+              size: 24,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _hablando ? 'TERMINAR' : 'HABLAR',
+              style: const TextStyle(
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusText(bool isLightMode) {
+    String statusText;
+    if (!_encendido) {
+      statusText = 'Asistente apagada';
+    } else if (_hablando) {
+      statusText = 'Escuchando...';
+    } else {
+      statusText = 'Asistente lista';
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      child: Text(
+        statusText,
+        key: ValueKey<String>(statusText),
+        style: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w500,
+          color: isLightMode ? Colors.black87 : Colors.white,
+        ),
+      ),
+    );
+  }
+
+  AppColors _getColors(bool isLightMode) {
+    return isLightMode
+        ? AppColors(
+            appBarGradient: const [
+              Color.fromARGB(255, 153, 251, 174),
+              Color(0xFF6DD5ED),
+            ],
+            backgroundGradient: const [
+              Color.fromARGB(255, 125, 255, 140),
+              Color(0xFF6DD5ED),
+            ],
+            buttonColor: const Color.fromARGB(255, 72, 255, 93),
+          )
+        : AppColors(
+            appBarGradient: [
+              Colors.grey[900]!,
+              Colors.grey[800]!,
+            ],
+            backgroundGradient: [
+              Colors.grey[900]!,
+              Colors.grey[800]!,
+            ],
+            buttonColor: Colors.green[800]!,
+          );
+  }
 }
 
-class _PermissionStatusIndicator extends StatelessWidget {
-  final IconData icon;
-  final PermissionStatus status;
-  final String label;
+class AppColors {
+  final List<Color> appBarGradient;
+  final List<Color> backgroundGradient;
+  final Color buttonColor;
 
-  const _PermissionStatusIndicator({
-    required this.icon,
-    required this.status,
-    required this.label,
+  AppColors({
+    required this.appBarGradient,
+    required this.backgroundGradient,
+    required this.buttonColor,
   });
+}
+
+class PulseAnimation extends StatefulWidget {
+  final Widget child;
+
+  const PulseAnimation({super.key, required this.child});
+
+  @override
+  State<PulseAnimation> createState() => _PulseAnimationState();
+}
+
+class _PulseAnimationState extends State<PulseAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.9, end: 1.1).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final color = status.isGranted
-        ? Colors.green
-        : status.isDenied
-            ? Colors.orange
-            : Colors.red;
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(icon, color: isDarkMode ? Colors.white70 : Colors.black54),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            color: isDarkMode ? Colors.white70 : Colors.black54,
-          ),
-        ),
-        Text(
-          status.isGranted
-              ? 'Concedido'
-              : status.isDenied
-                  ? 'Denegado'
-                  : 'No concedido',
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
+    return ScaleTransition(
+      scale: _animation,
+      child: widget.child,
     );
   }
 }
