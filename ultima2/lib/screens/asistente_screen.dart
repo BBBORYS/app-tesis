@@ -1,7 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:overlay_support/overlay_support.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/theme_provider.dart';
+
+void main() {
+  runApp(
+    OverlaySupport(
+      child: ChangeNotifierProvider(
+        create: (_) => ThemeProvider(),
+        child: const MyApp(),
+      ),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    return MaterialApp(
+      title: 'Asistente Ana',
+      theme: themeProvider.currentTheme,
+      home: const AsistenteAnaScreen(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
 
 class AsistenteAnaScreen extends StatefulWidget {
   const AsistenteAnaScreen({super.key});
@@ -15,6 +42,8 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
   bool _hablando = false;
   bool _showPulseAnimation = false;
   late SharedPreferences _prefs;
+  OverlaySupportEntry? _overlayEntry;
+  Offset _floatingIconPosition = const Offset(20, 100);
 
   @override
   void initState() {
@@ -32,6 +61,7 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) setState(() => _showPulseAnimation = false);
         });
+        _showFloatingIcon();
       }
     });
   }
@@ -39,6 +69,83 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
   Future<void> _savePreferences() async {
     await _prefs.setBool('encendido', _encendido);
     await _prefs.setBool('hablando', _hablando);
+  }
+
+  void _showFloatingIcon() {
+    _overlayEntry = showOverlay(
+      (context, progress) {
+        return Positioned(
+          left: _floatingIconPosition.dx,
+          top: _floatingIconPosition.dy,
+          child: GestureDetector(
+            onPanUpdate: (details) {
+              setState(() {
+                _floatingIconPosition = Offset(
+                  _floatingIconPosition.dx + details.delta.dx,
+                  _floatingIconPosition.dy + details.delta.dy,
+                );
+              });
+              _hideFloatingIcon();
+              _showFloatingIcon();
+            },
+            onTap: _toggleHablar,
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                      image: const DecorationImage(
+                        image: AssetImage('assets/ana_avatar.png'),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    child: _hablando
+                        ? const Icon(Icons.mic, color: Colors.white, size: 24)
+                        : null,
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _hablando ? 'TERMINAR' : 'HABLAR',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 10,
+                          color: Colors.black,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      key: const ValueKey('floating_ana'),
+    );
+  }
+
+  void _hideFloatingIcon() {
+    _overlayEntry?.dismiss();
+    _overlayEntry = null;
   }
 
   void _toggleEncendido() async {
@@ -50,6 +157,9 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) setState(() => _showPulseAnimation = false);
         });
+        _showFloatingIcon();
+      } else {
+        _hideFloatingIcon();
       }
     });
     await _savePreferences();
@@ -58,8 +168,18 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
   void _toggleHablar() async {
     setState(() {
       _hablando = !_hablando;
+      if (_overlayEntry != null) {
+        _hideFloatingIcon();
+        _showFloatingIcon();
+      }
     });
     await _savePreferences();
+  }
+
+  @override
+  void dispose() {
+    _hideFloatingIcon();
+    super.dispose();
   }
 
   @override
