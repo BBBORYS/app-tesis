@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/theme_provider.dart';
 
 class AsistenteAnaScreen extends StatefulWidget {
@@ -13,12 +14,19 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
   bool _encendido = false;
   bool _hablando = false;
   bool _showPulseAnimation = false;
+  late SharedPreferences _prefs;
 
-  void _toggleEncendido() {
+  @override
+  void initState() {
+    super.initState();
+    _loadPreferences();
+  }
+
+  Future<void> _loadPreferences() async {
+    _prefs = await SharedPreferences.getInstance();
     setState(() {
-      _encendido = !_encendido;
-      if (!_encendido)
-        _hablando = false; // Si se apaga, termina la conversación
+      _encendido = _prefs.getBool('encendido') ?? false;
+      _hablando = _prefs.getBool('hablando') ?? false;
       if (_encendido) {
         _showPulseAnimation = true;
         Future.delayed(const Duration(seconds: 2), () {
@@ -28,10 +36,30 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
     });
   }
 
-  void _toggleHablar() {
+  Future<void> _savePreferences() async {
+    await _prefs.setBool('encendido', _encendido);
+    await _prefs.setBool('hablando', _hablando);
+  }
+
+  void _toggleEncendido() async {
+    setState(() {
+      _encendido = !_encendido;
+      if (!_encendido) _hablando = false;
+      if (_encendido) {
+        _showPulseAnimation = true;
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) setState(() => _showPulseAnimation = false);
+        });
+      }
+    });
+    await _savePreferences();
+  }
+
+  void _toggleHablar() async {
     setState(() {
       _hablando = !_hablando;
     });
+    await _savePreferences();
   }
 
   @override
@@ -77,21 +105,14 @@ class _AsistenteAnaScreenState extends State<AsistenteAnaScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Avatar con efecto de pulso
                 _buildAvatar(isLightMode),
                 const SizedBox(height: 40),
-
-                // Botón principal de encendido
                 _buildActionButton(isLightMode, colors),
                 const SizedBox(height: 20),
-
-                // Botón de hablar/terminar (solo visible cuando está encendido)
                 if (_encendido) ...[
                   _buildHablarButton(isLightMode, colors),
                   const SizedBox(height: 20),
                 ],
-
-                // Texto de estado
                 _buildStatusText(isLightMode),
               ],
             ),
