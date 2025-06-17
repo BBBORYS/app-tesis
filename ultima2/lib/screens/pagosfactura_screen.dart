@@ -15,13 +15,14 @@ class PagosFacturaScreen extends StatefulWidget {
 }
 
 class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
-  final Map<String, int> _countdownValues = {};
+  final Map<String, StreamController<int>> _countdownControllers = {};
   final Map<String, Timer> _countdownTimers = {};
 
   @override
   void dispose() {
-    // Cancelar todos los timers al salir de la pantalla
+    // Cancelar todos los timers y cerrar controllers al salir de la pantalla
     _countdownTimers.values.forEach((timer) => timer.cancel());
+    _countdownControllers.values.forEach((controller) => controller.close());
     super.dispose();
   }
 
@@ -119,7 +120,9 @@ class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
                   // Limpiar timers cuando no hay citas
                   _countdownTimers.values.forEach((timer) => timer.cancel());
                   _countdownTimers.clear();
-                  _countdownValues.clear();
+                  _countdownControllers.values
+                      .forEach((controller) => controller.close());
+                  _countdownControllers.clear();
 
                   return Center(
                     child: Text(
@@ -158,13 +161,6 @@ class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
                           final fechaFinCita =
                               fechaCita.add(Duration(hours: duracion));
 
-                          // Inicializar el contador si no existe y la cita está pendiente
-                          if (cita['estado'] == 'pendiente' &&
-                              !_countdownValues.containsKey(citaId)) {
-                            _countdownValues[citaId] = 100;
-                            _startCountdown(citaId, context);
-                          }
-
                           // Verificar si la cita ya expiró (2 horas después de la fecha de fin)
                           final ahora = DateTime.now();
                           final diferenciaExpiracion =
@@ -178,11 +174,53 @@ class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
                             return SizedBox.shrink();
                           }
 
+                          // Verificar si la cita expiró por tiempo de pago
+                          if (cita['estado'] == 'pendiente') {
+                            final tiempoCreacion = cita['tiempoCreacion'] !=
+                                    null
+                                ? (cita['tiempoCreacion'] as Timestamp).toDate()
+                                : fechaCita; // Fallback para citas existentes
+
+                            final tiempoTranscurrido =
+                                ahora.difference(tiempoCreacion);
+
+                            if (tiempoTranscurrido.inSeconds >= 100) {
+                              _removeCountdown(citaId);
+                              FirebaseFirestore.instance
+                                  .collection('citas')
+                                  .doc(citaId)
+                                  .delete();
+
+                              // Mostrar mensaje solo si estamos en la pantalla
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'La cita ha sido eliminada por falta de pago.'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              });
+                              return SizedBox.shrink();
+                            }
+                          }
+
+                          // Inicializar el contador si no existe y la cita está pendiente
+                          if (cita['estado'] == 'pendiente' &&
+                              !_countdownControllers.containsKey(citaId)) {
+                            _countdownControllers[citaId] =
+                                StreamController<int>.broadcast();
+                            _startCountdown(citaId, cita, context);
+                          }
+
                           return _CitaCard(
                             cita: cita,
                             citaId: citaId,
                             fechaFinCita: fechaFinCita,
-                            countdownValue: _countdownValues[citaId],
+                            countdownStream:
+                                _countdownControllers[citaId]?.stream,
                             themeProvider: themeProvider,
                             onPayment: () => _realizarPago(context, citaId),
                             onDelete: () => _eliminarCita(context, citaId),
@@ -221,34 +259,59 @@ class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
     );
   }
 
-  void _startCountdown(String citaId, BuildContext context) {
+  void _startCountdown(
+      String citaId, Map<String, dynamic> cita, BuildContext context) {
+    final tiempoCreacion = cita['tiempoCreacion'] != null
+        ? (cita['tiempoCreacion'] as Timestamp).toDate()
+        : DateTime.now(); // Fallback para citas existentes
+
+    // Calcular tiempo restante inicial
+    final tiempoTranscurrido = DateTime.now().difference(tiempoCreacion);
+    int tiempoRestante = 100 - tiempoTranscurrido.inSeconds;
+
+    if (tiempoRestante <= 0) {
+      tiempoRestante = 0;
+      _countdownControllers[citaId]?.add(tiempoRestante);
+      return;
+    }
+
+    _countdownControllers[citaId]?.add(tiempoRestante);
+
     _countdownTimers[citaId] = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (!_countdownValues.containsKey(citaId)) {
+      if (!_countdownControllers.containsKey(citaId)) {
         timer.cancel();
         return;
       }
 
-      setState(() {
-        _countdownValues[citaId] = _countdownValues[citaId]! - 1;
-      });
+      // Recalcular tiempo restante basado en el tiempo real
+      final tiempoTranscurridoActual =
+          DateTime.now().difference(tiempoCreacion);
+      final tiempoRestanteActual = 100 - tiempoTranscurridoActual.inSeconds;
 
-      if (_countdownValues[citaId]! <= 0) {
+      if (tiempoRestanteActual <= 0) {
+        _countdownControllers[citaId]?.add(0);
         _removeCountdown(citaId);
         FirebaseFirestore.instance.collection('citas').doc(citaId).delete();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('La cita ha sido eliminada por falta de pago.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('La cita ha sido eliminada por falta de pago.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
       }
+
+      _countdownControllers[citaId]?.add(tiempoRestanteActual);
     });
   }
 
   void _removeCountdown(String citaId) {
     _countdownTimers[citaId]?.cancel();
     _countdownTimers.remove(citaId);
-    _countdownValues.remove(citaId);
+    _countdownControllers[citaId]?.close();
+    _countdownControllers.remove(citaId);
   }
 
   Future<void> _realizarPago(BuildContext context, String citaId) async {
@@ -307,7 +370,7 @@ class _CitaCard extends StatelessWidget {
   final Map<String, dynamic> cita;
   final String citaId;
   final DateTime fechaFinCita;
-  final int? countdownValue;
+  final Stream<int>? countdownStream;
   final ThemeProvider themeProvider;
   final VoidCallback onPayment;
   final VoidCallback onDelete;
@@ -316,7 +379,7 @@ class _CitaCard extends StatelessWidget {
     required this.cita,
     required this.citaId,
     required this.fechaFinCita,
-    required this.countdownValue,
+    required this.countdownStream,
     required this.themeProvider,
     required this.onPayment,
     required this.onDelete,
@@ -325,13 +388,6 @@ class _CitaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // No mostrar si el contador llegó a 0 y la cita sigue pendiente
-    if (cita['estado'] == 'pendiente' &&
-        countdownValue != null &&
-        countdownValue! <= 0) {
-      return SizedBox.shrink();
-    }
-
     return Card(
       elevation: 4,
       margin: EdgeInsets.only(bottom: 16.0),
@@ -404,17 +460,10 @@ class _CitaCard extends StatelessWidget {
                   SizedBox(height: 4),
                   // Temporizador de pago (solo para citas pendientes)
                   if (cita['estado'] == 'pendiente')
-                    Text(
-                      countdownValue != null
-                          ? 'Tiempo para pago: $countdownValue segundos'
-                          : 'Tiempo para pago: 100 segundos',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: countdownValue != null && countdownValue! > 30
-                            ? Colors.blue
-                            : Colors.red,
-                      ),
+                    _PaymentCountdown(
+                      cita: cita,
+                      countdownStream: countdownStream,
+                      themeProvider: themeProvider,
                     ),
                 ],
               ),
@@ -476,6 +525,87 @@ class _CitaCard extends StatelessWidget {
   String _formatTimestamp(Timestamp timestamp) {
     final DateTime date = timestamp.toDate();
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+class _PaymentCountdown extends StatelessWidget {
+  final Map<String, dynamic> cita;
+  final Stream<int>? countdownStream;
+  final ThemeProvider themeProvider;
+
+  const _PaymentCountdown({
+    required this.cita,
+    required this.countdownStream,
+    required this.themeProvider,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Si no hay stream, calcular tiempo restante basado en timestamp
+    if (countdownStream == null) {
+      final tiempoCreacion = cita['tiempoCreacion'] != null
+          ? (cita['tiempoCreacion'] as Timestamp).toDate()
+          : DateTime.now();
+
+      final tiempoTranscurrido = DateTime.now().difference(tiempoCreacion);
+      final tiempoRestante = 100 - tiempoTranscurrido.inSeconds;
+
+      return Text(
+        'Tiempo para pago: ${tiempoRestante > 0 ? tiempoRestante : 0} segundos',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: tiempoRestante > 30 ? Colors.blue : Colors.red,
+        ),
+      );
+    }
+
+    return StreamBuilder<int>(
+      stream: countdownStream,
+      builder: (context, snapshot) {
+        // Si no hay datos del stream, calcular basado en timestamp
+        if (!snapshot.hasData) {
+          final tiempoCreacion = cita['tiempoCreacion'] != null
+              ? (cita['tiempoCreacion'] as Timestamp).toDate()
+              : DateTime.now();
+
+          final tiempoTranscurrido = DateTime.now().difference(tiempoCreacion);
+          final tiempoRestante = 100 - tiempoTranscurrido.inSeconds;
+
+          return Text(
+            'Tiempo para pago: ${tiempoRestante > 0 ? tiempoRestante : 0} segundos',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: tiempoRestante > 30 ? Colors.blue : Colors.red,
+            ),
+          );
+        }
+
+        final countdownValue = snapshot.data!;
+
+        if (countdownValue <= 0) {
+          return Text(
+            'Tiempo agotado',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+          );
+        }
+
+        return Text(
+          'Tiempo para pago: $countdownValue segundos',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: countdownValue > 30 ? Colors.blue : Colors.red,
+          ),
+        );
+      },
+    );
   }
 }
 
