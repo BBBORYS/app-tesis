@@ -1,12 +1,29 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/foundation.dart';
 import '../providers/theme_provider.dart';
-import 'pagosfactura2_screen.dart';
 
-class PagosFacturaScreen extends StatelessWidget {
+class PagosFacturaScreen extends StatefulWidget {
   const PagosFacturaScreen({Key? key}) : super(key: key);
+
+  @override
+  _PagosFacturaScreenState createState() => _PagosFacturaScreenState();
+}
+
+class _PagosFacturaScreenState extends State<PagosFacturaScreen> {
+  final Map<String, int> _countdownValues = {};
+  final Map<String, Timer> _countdownTimers = {};
+
+  @override
+  void dispose() {
+    // Cancelar todos los timers al salir de la pantalla
+    _countdownTimers.values.forEach((timer) => timer.cancel());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,36 +72,6 @@ class PagosFacturaScreen extends StatelessWidget {
             ),
           ),
         ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => PagosFactura2Screen(),
-                  ),
-                );
-              },
-              icon: Icon(Icons.receipt_long, size: 24),
-              label: Text(
-                'Ver Facturas',
-                style: TextStyle(fontSize: 16),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    themeProvider.currentTheme.brightness == Brightness.light
-                        ? Color.fromARGB(255, 72, 255, 93)
-                        : Colors.green[800],
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
       body: Container(
         decoration: BoxDecoration(
@@ -129,6 +116,11 @@ class PagosFacturaScreen extends StatelessWidget {
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  // Limpiar timers cuando no hay citas
+                  _countdownTimers.values.forEach((timer) => timer.cancel());
+                  _countdownTimers.clear();
+                  _countdownValues.clear();
+
                   return Center(
                     child: Text(
                       'No hay citas realizadas',
@@ -159,29 +151,41 @@ class PagosFacturaScreen extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final cita =
                               citas[index].data() as Map<String, dynamic>;
+                          final citaId = citas[index].id;
                           final fechaCita =
                               (cita['fecha'] as Timestamp).toDate();
                           final duracion = cita['duracion'] as int;
                           final fechaFinCita =
                               fechaCita.add(Duration(hours: duracion));
 
-                          final ahora = DateTime.now();
-                          final diferencia = ahora.difference(fechaCita);
+                          // Inicializar el contador si no existe y la cita está pendiente
+                          if (cita['estado'] == 'pendiente' &&
+                              !_countdownValues.containsKey(citaId)) {
+                            _countdownValues[citaId] = 100;
+                            _startCountdown(citaId, context);
+                          }
 
-                          if (diferencia.inHours > 2) {
+                          // Verificar si la cita ya expiró (2 horas después de la fecha de fin)
+                          final ahora = DateTime.now();
+                          final diferenciaExpiracion =
+                              ahora.difference(fechaFinCita);
+                          if (diferenciaExpiracion.inHours > 2) {
+                            _removeCountdown(citaId);
                             FirebaseFirestore.instance
                                 .collection('citas')
-                                .doc(citas[index].id)
+                                .doc(citaId)
                                 .delete();
                             return SizedBox.shrink();
                           }
 
-                          return _buildCitaCard(
-                            cita,
-                            themeProvider,
-                            fechaFinCita,
-                            context,
-                            citas[index].id,
+                          return _CitaCard(
+                            cita: cita,
+                            citaId: citaId,
+                            fechaFinCita: fechaFinCita,
+                            countdownValue: _countdownValues[citaId],
+                            themeProvider: themeProvider,
+                            onPayment: () => _realizarPago(context, citaId),
+                            onDelete: () => _eliminarCita(context, citaId),
                           );
                         },
                       ),
@@ -217,13 +221,117 @@ class PagosFacturaScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCitaCard(
-    Map<String, dynamic> cita,
-    ThemeProvider themeProvider,
-    DateTime fechaFinCita,
-    BuildContext context,
-    String citaId,
-  ) {
+  void _startCountdown(String citaId, BuildContext context) {
+    _countdownTimers[citaId] = Timer.periodic(Duration(seconds: 1), (timer) {
+      if (!_countdownValues.containsKey(citaId)) {
+        timer.cancel();
+        return;
+      }
+
+      setState(() {
+        _countdownValues[citaId] = _countdownValues[citaId]! - 1;
+      });
+
+      if (_countdownValues[citaId]! <= 0) {
+        _removeCountdown(citaId);
+        FirebaseFirestore.instance.collection('citas').doc(citaId).delete();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('La cita ha sido eliminada por falta de pago.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    });
+  }
+
+  void _removeCountdown(String citaId) {
+    _countdownTimers[citaId]?.cancel();
+    _countdownTimers.remove(citaId);
+    _countdownValues.remove(citaId);
+  }
+
+  Future<void> _realizarPago(BuildContext context, String citaId) async {
+    await FirebaseFirestore.instance
+        .collection('citas')
+        .doc(citaId)
+        .update({'estado': 'pagado'});
+
+    _removeCountdown(citaId);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Pago realizado con éxito.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  void _eliminarCita(BuildContext context, String citaId) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Eliminar Cita'),
+          content: Text('¿Estás seguro de que deseas eliminar esta cita?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () async {
+                _removeCountdown(citaId);
+                await FirebaseFirestore.instance
+                    .collection('citas')
+                    .doc(citaId)
+                    .delete();
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Cita eliminada correctamente.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              },
+              child: Text('Eliminar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _CitaCard extends StatelessWidget {
+  final Map<String, dynamic> cita;
+  final String citaId;
+  final DateTime fechaFinCita;
+  final int? countdownValue;
+  final ThemeProvider themeProvider;
+  final VoidCallback onPayment;
+  final VoidCallback onDelete;
+
+  const _CitaCard({
+    required this.cita,
+    required this.citaId,
+    required this.fechaFinCita,
+    required this.countdownValue,
+    required this.themeProvider,
+    required this.onPayment,
+    required this.onDelete,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // No mostrar si el contador llegó a 0 y la cita sigue pendiente
+    if (cita['estado'] == 'pendiente' &&
+        countdownValue != null &&
+        countdownValue! <= 0) {
+      return SizedBox.shrink();
+    }
+
     return Card(
       elevation: 4,
       margin: EdgeInsets.only(bottom: 16.0),
@@ -291,77 +399,22 @@ class PagosFacturaScreen extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: 8),
-                  // Temporizador 1: Tiempo restante de la cita
-                  StreamBuilder(
-                    stream: Stream.periodic(Duration(seconds: 1), (i) => i),
-                    builder: (context, snapshot) {
-                      final ahora = DateTime.now();
-                      final tiempoRestante = fechaFinCita.difference(ahora);
-
-                      return Text(
-                        'Tiempo restante de la cita: ${_formatDuration(tiempoRestante)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: tiempoRestante.inSeconds > 0
-                              ? Colors.green
-                              : Colors.red,
-                        ),
-                      );
-                    },
-                  ),
+                  // Temporizador de la cita
+                  _CitaTimer(fechaFinCita: fechaFinCita),
                   SizedBox(height: 4),
-                  // Temporizador 2: Tiempo límite para realizar el pago
+                  // Temporizador de pago (solo para citas pendientes)
                   if (cita['estado'] == 'pendiente')
-                    StreamBuilder(
-                      stream: Stream.periodic(Duration(seconds: 1), (i) => i),
-                      builder: (context, snapshot) {
-                        final ahora = DateTime.now();
-                        final fechaCreacion =
-                            (cita['fecha'] as Timestamp).toDate();
-                        final tiempoTranscurrido =
-                            ahora.difference(fechaCreacion);
-                        final tiempoRestantePago =
-                            Duration(hours: 1) - tiempoTranscurrido;
-
-                        if (tiempoRestantePago.inSeconds <= 0) {
-                          Future.delayed(Duration.zero, () {
-                            FirebaseFirestore.instance
-                                .collection('citas')
-                                .doc(citaId)
-                                .delete()
-                                .then((_) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      'La cita ha sido eliminada por falta de pago.'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            });
-                          });
-
-                          return Text(
-                            'Tiempo para pago: Expirado',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          );
-                        }
-
-                        return Text(
-                          'Tiempo para pago: ${_formatDuration(tiempoRestantePago)}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: tiempoRestantePago.inMinutes > 5
-                                ? Colors.blue
-                                : Colors.red,
-                          ),
-                        );
-                      },
+                    Text(
+                      countdownValue != null
+                          ? 'Tiempo para pago: $countdownValue segundos'
+                          : 'Tiempo para pago: 100 segundos',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: countdownValue != null && countdownValue! > 30
+                            ? Colors.blue
+                            : Colors.red,
+                      ),
                     ),
                 ],
               ),
@@ -370,19 +423,7 @@ class PagosFacturaScreen extends StatelessWidget {
               children: [
                 if (cita['estado'] == 'pendiente')
                   ElevatedButton(
-                    onPressed: () async {
-                      await FirebaseFirestore.instance
-                          .collection('citas')
-                          .doc(citaId)
-                          .update({'estado': 'pagado'});
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Pago realizado con éxito.'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
+                    onPressed: onPayment,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: themeProvider.currentTheme.brightness ==
                               Brightness.light
@@ -406,9 +447,7 @@ class PagosFacturaScreen extends StatelessWidget {
                   ),
                 SizedBox(height: 8),
                 ElevatedButton(
-                  onPressed: () {
-                    _eliminarCita(context, citaId);
-                  },
+                  onPressed: onDelete,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: themeProvider.currentTheme.brightness ==
                             Brightness.light
@@ -438,6 +477,49 @@ class PagosFacturaScreen extends StatelessWidget {
     final DateTime date = timestamp.toDate();
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
+}
+
+class _CitaTimer extends StatefulWidget {
+  final DateTime fechaFinCita;
+
+  const _CitaTimer({required this.fechaFinCita, Key? key}) : super(key: key);
+
+  @override
+  __CitaTimerState createState() => __CitaTimerState();
+}
+
+class __CitaTimerState extends State<_CitaTimer> {
+  late Duration _tiempoRestante;
+  late Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _tiempoRestante = widget.fechaFinCita.difference(DateTime.now());
+    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+      setState(() {
+        _tiempoRestante = widget.fechaFinCita.difference(DateTime.now());
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      'Tiempo restante de la cita: ${_formatDuration(_tiempoRestante)}',
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.bold,
+        color: _tiempoRestante.inSeconds > 0 ? Colors.green : Colors.red,
+      ),
+    );
+  }
 
   String _formatDuration(Duration duration) {
     if (duration.inSeconds < 0) {
@@ -446,42 +528,6 @@ class PagosFacturaScreen extends StatelessWidget {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
     final seconds = duration.inSeconds.remainder(60);
-    return '$hours h $minutes m $seconds s';
-  }
-
-  void _eliminarCita(BuildContext context, String citaId) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('Eliminar Cita'),
-          content: Text('¿Estás seguro de que deseas eliminar esta cita?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () async {
-                await FirebaseFirestore.instance
-                    .collection('citas')
-                    .doc(citaId)
-                    .delete();
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Cita eliminada correctamente.'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              },
-              child: Text('Eliminar'),
-            ),
-          ],
-        );
-      },
-    );
+    return '$hours h ${minutes.toString().padLeft(2, '0')} m ${seconds.toString().padLeft(2, '0')} s';
   }
 }

@@ -4,7 +4,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ultima2/providers/theme_provider.dart';
-import 'package:ultima2/screens/asistente_screen.dart';
 import 'package:ultima2/screens/crearcita_screen.dart';
 import 'package:ultima2/screens/gusanito_screen.dart';
 import 'package:ultima2/screens/pagosfactura_screen.dart';
@@ -83,7 +82,6 @@ class MyApp extends StatelessWidget {
               '/game': (context) => GameScreen(),
               '/perfil': (context) => PerfilScreen(userName: 'Usuario'),
               '/price_management': (context) => PriceManagementScreen(),
-              '/asistente': (context) => const AsistenteAnaScreen(),
             },
           );
         }
