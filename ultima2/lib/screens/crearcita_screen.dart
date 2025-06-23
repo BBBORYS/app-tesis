@@ -200,7 +200,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
         return;
       }
 
-      // ignore: unused_local_variable
+      // Guardar la cita con el nuevo campo fechaCreacion
       final docRef = await FirebaseFirestore.instance.collection('citas').add({
         'userId': user.uid,
         'fecha': Timestamp.fromDate(fullDate),
@@ -209,6 +209,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
         'duracion': selectedDuracion,
         'estado': 'pendiente',
         'timestamp': Timestamp.now(),
+        'fechaCreacion': FieldValue.serverTimestamp(), // Nuevo campo añadido
       });
 
       ScaffoldMessenger.of(context).showSnackBar(

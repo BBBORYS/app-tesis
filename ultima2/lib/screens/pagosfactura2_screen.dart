@@ -1,222 +1,181 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:provider/provider.dart';
-import '../providers/theme_provider.dart';
 
-class PagosFactura2Screen extends StatelessWidget {
+class PagosFacturas2Screen extends StatefulWidget {
+  final String citaId;
+  final Map<String, dynamic> citaData;
+
+  const PagosFacturas2Screen({
+    Key? key,
+    required this.citaId,
+    required this.citaData,
+  }) : super(key: key);
+
+  @override
+  _PagosFacturas2ScreenState createState() => _PagosFacturas2ScreenState();
+}
+
+class _PagosFacturas2ScreenState extends State<PagosFacturas2Screen> {
+  bool _isProcessing = false;
+  bool _paymentSuccess = false;
+  String _errorMessage = '';
+
   @override
   Widget build(BuildContext context) {
-    final themeProvider = Provider.of<ThemeProvider>(context);
-    final User? user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            'Debes iniciar sesión para ver tus facturas.',
-            style: TextStyle(
-              color: themeProvider.currentTheme.brightness == Brightness.light
-                  ? Colors.black87
-                  : Colors.white,
-            ),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Facturas Pagadas jajaaj',
-          style: TextStyle(
-            color: themeProvider.currentTheme.brightness == Brightness.light
-                ? Colors.black
-                : Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                themeProvider.currentTheme.brightness == Brightness.light
-                    ? Color.fromARGB(255, 153, 251, 174)
-                    : Colors.grey[900]!,
-                themeProvider.currentTheme.brightness == Brightness.light
-                    ? Color(0xFF6DD5ED)
-                    : Colors.grey[800]!,
-              ],
-            ),
-          ),
-        ),
-        leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back,
-            color: themeProvider.currentTheme.brightness == Brightness.light
-                ? Colors.white
-                : Colors.white,
-          ),
-          onPressed: () {
-            Navigator.pop(context); // Regresar a la pantalla anterior
-          },
-        ),
+        title: Text('Procesar Pago'),
+        centerTitle: true,
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              themeProvider.currentTheme.brightness == Brightness.light
-                  ? Color.fromARGB(255, 125, 255, 140)
-                  : Colors.grey[900]!,
-              themeProvider.currentTheme.brightness == Brightness.light
-                  ? Color(0xFF6DD5ED)
-                  : Colors.grey[800]!,
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Resumen de la Cita',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 20),
+            _buildDetailRow('Tipo de cita:', widget.citaData['tipo']),
+            _buildDetailRow(
+                'Fecha:', _formatTimestamp(widget.citaData['fecha'])),
+            _buildDetailRow(
+                'Duración:', '${widget.citaData['duracion']} horas'),
+            _buildDetailRow(
+                'Precio:', '\$${widget.citaData['precio'].toString()}'),
+            Divider(height: 40),
+            if (!_paymentSuccess) ...[
+              Text(
+                'Método de Pago',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 20),
+              _buildPaymentMethodCard('Tarjeta de Crédito', Icons.credit_card),
+              SizedBox(height: 15),
+              _buildPaymentMethodCard('PayPal', Icons.payment),
+              SizedBox(height: 30),
+              if (_errorMessage.isNotEmpty)
+                Text(
+                  _errorMessage,
+                  style: TextStyle(color: Colors.red),
+                ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isProcessing ? null : _processPayment,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: Size(double.infinity, 50),
+                  backgroundColor: Colors.blue,
+                ),
+                child: _isProcessing
+                    ? CircularProgressIndicator(color: Colors.white)
+                    : Text(
+                        'Confirmar Pago',
+                        style: TextStyle(fontSize: 18),
+                      ),
+              ),
+            ] else ...[
+              Icon(Icons.check_circle, color: Colors.green, size: 80),
+              SizedBox(height: 20),
+              Text(
+                '¡Pago Completado Exitosamente!',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 20),
+              Text(
+                'Tu cita ha sido confirmada y el estado ha sido actualizado a "pagado".',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16),
+              ),
+              SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: Size(double.infinity, 50),
+                  backgroundColor: Colors.green,
+                ),
+                child: Text(
+                  'Volver a Mis Citas',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
             ],
-          ),
-        ),
-        child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('citas') // Nombre de la colección en Firestore
-              .where('userId', isEqualTo: user.uid) // Filtrar por usuario
-              .where('estado',
-                  isEqualTo: 'pagado') // Filtrar por estado "pagado"
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Center(child: CircularProgressIndicator());
-            }
-
-            if (snapshot.hasError) {
-              print(
-                  'Error al cargar las citas: ${snapshot.error}'); // Depuración
-              return Center(
-                child: Text(
-                  'Error al cargar las facturas',
-                  style: TextStyle(
-                    color: themeProvider.currentTheme.brightness ==
-                            Brightness.light
-                        ? Colors.black87
-                        : Colors.white,
-                  ),
-                ),
-              );
-            }
-
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-              print('No hay citas pagadas'); // Depuración
-              return Center(
-                child: Text(
-                  'No hay facturas pagadas',
-                  style: TextStyle(
-                    color: themeProvider.currentTheme.brightness ==
-                            Brightness.light
-                        ? Colors.black87
-                        : Colors.white,
-                  ),
-                ),
-              );
-            }
-
-            final citas = snapshot.data!.docs;
-            print('Citas encontradas: ${citas.length}'); // Depuración
-
-            return ListView.builder(
-              padding: const EdgeInsets.all(16.0),
-              itemCount: citas.length,
-              itemBuilder: (context, index) {
-                final cita = citas[index].data() as Map<String, dynamic>;
-                print('Cita: $cita'); // Depuración
-                final fecha = (cita['fecha'] as Timestamp).toDate();
-                final tipo = cita['tipo'] as String;
-                final precio = cita['precio'] as double;
-                final duracion = cita['duracion'] as int;
-                final estado = cita['estado'] as String;
-
-                return Card(
-                  elevation: 4,
-                  margin: const EdgeInsets.only(bottom: 16.0),
-                  color:
-                      themeProvider.currentTheme.brightness == Brightness.light
-                          ? const Color.fromARGB(255, 218, 252, 255)
-                          : Colors.grey[800],
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Cita: $tipo',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: themeProvider.currentTheme.brightness ==
-                                    Brightness.light
-                                ? Colors.black87
-                                : Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Fecha: ${_formatDate(fecha)}',
-                          style: TextStyle(
-                            color: themeProvider.currentTheme.brightness ==
-                                    Brightness.light
-                                ? Colors.black87
-                                : Colors.white,
-                          ),
-                        ),
-                        Text(
-                          'Precio: \$${precio.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: themeProvider.currentTheme.brightness ==
-                                    Brightness.light
-                                ? Colors.black87
-                                : Colors.white,
-                          ),
-                        ),
-                        Text(
-                          'Duración: $duracion hora(s)',
-                          style: TextStyle(
-                            color: themeProvider.currentTheme.brightness ==
-                                    Brightness.light
-                                ? Colors.black87
-                                : Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Estado: $estado',
-                            style: TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          },
+          ],
         ),
       ),
     );
   }
 
-  String _formatDate(DateTime date) {
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(width: 10),
+          Text(value),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentMethodCard(String title, IconData icon) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(15.0),
+        child: Row(
+          children: [
+            Icon(icon, size: 30),
+            SizedBox(width: 15),
+            Text(
+              title,
+              style: TextStyle(fontSize: 16),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _processPayment() async {
+    setState(() {
+      _isProcessing = true;
+      _errorMessage = '';
+    });
+
+    try {
+      // Simular procesamiento de pago (reemplazar con tu lógica real de pago)
+      await Future.delayed(Duration(seconds: 2));
+
+      // Actualizar estado en Firestore
+      await FirebaseFirestore.instance
+          .collection('citas')
+          .doc(widget.citaId)
+          .update({'estado': 'pagado'});
+
+      setState(() {
+        _paymentSuccess = true;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error al procesar el pago: ${e.toString()}';
+      });
+    } finally {
+      if (!_paymentSuccess) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  String _formatTimestamp(Timestamp timestamp) {
+    final DateTime date = timestamp.toDate();
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
 }
